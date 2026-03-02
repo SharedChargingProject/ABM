@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant V as Vehicle
+    participant CC as ChargingColumn
+    
+    alt Charging Complete
+        CC->>V: Signal charge_cmpt_event
+    else Park End Reached
+        V->>V: Park time over
+    end
+    
+    V->>V: Wait until park_end (if needed)
+    V->>CC: Signal request_disconnect
+    CC->>V: Signal request_disconnect_approved
+    V->>CC: Release resource
+    V->>V: Leave

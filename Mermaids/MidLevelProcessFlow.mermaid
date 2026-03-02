@@ -1,0 +1,57 @@
+flowchart TD
+    subgraph Init["System Setup"]
+        I1[Create SimPy Environment] --> I2[Create EnergySandbox<br/>Power Grid Container]
+        I2 --> I3[Create ChargingColumns<br/>simpy.Resource]
+        I3 --> I4[Spawn Vehicle Processes]
+        I4 --> I5[Run Simulation]
+    end
+
+    subgraph VehicleLifecycle["Vehicle Lifecycle"]
+        V1([Vehicle Arrives]) --> V2[Wait for Available Column]
+        V2 --> V3[Request Column Resource]
+        V3 --> V4{Acquired?}
+        V4 -->|Timeout| V5([Leave Unserved])
+        V4 -->|Success| V6[Signal arrival_event]
+        V6 --> V7[Wait for Charging]
+        V7 --> V8[Request Disconnect]
+        V8 --> V9[Wait for Approval]
+        V9 --> V10[Release Column]
+        V10 --> V11([Vehicle Leaves])
+    end
+
+    subgraph ColumnProcess["ChargingColumn Process"]
+        C1[Wait for arrival_event] --> C2[Select Next EV<br/>FCFS or SHRD]
+        C2 --> C3[Handshake with EV]
+        C3 --> C4[Request Power from Grid]
+        C4 --> C5[Deliver Energy in Windows]
+        C5 --> C6{Continue?}
+        C6 -->|Yes| C4
+        C6 -->|No| C7[Approve Disconnect]
+        C7 --> C1
+    end
+
+    subgraph PowerGrid["EnergySandbox - Power Grid"]
+        P1[Column Requests Power] --> P2{Available?}
+        P2 -->|No| P3[Queue & Wait]
+        P3 --> P2
+        P2 -->|Yes| P4[Allocate Power]
+        P4 --> P5[Column Uses Power]
+        P5 --> P6[Release Power]
+        P6 --> P1
+    end
+
+    subgraph Signals["Key Signals/Events"]
+        S1[arrival_event] -.-> S2[Vehicle connects to Column]
+        S3[request_disconnect] -.-> S4[Vehicle wants to leave]
+        S5[request_disconnect_approved] -.-> S6[Column approves]
+        S7[charge_cmpt_event] -.-> S8[Charging complete]
+    end
+
+    VehicleLifecycle -.->|Uses| ColumnProcess
+    ColumnProcess -.->|Uses| PowerGrid
+
+    style Init fill:#e1f5ff
+    style VehicleLifecycle fill:#fff4e1
+    style ColumnProcess fill:#e8f5e9
+    style PowerGrid fill:#fce4ec
+    style Signals fill:#ffebee

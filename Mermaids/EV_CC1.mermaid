@@ -1,0 +1,13 @@
+sequenceDiagram
+    participant V as Vehicle
+    participant CC as ChargingColumn
+    
+    V->>V: Arrive
+    V->>CC: Check available ports
+    alt Port Available
+        V->>CC: Request resource
+        CC-->>V: Resource granted
+        V->>CC: Signal arrival_event
+    else No Port or Timeout
+        V->>V: Leave unserved
+    end

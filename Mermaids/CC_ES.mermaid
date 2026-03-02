@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant CC as ChargingColumn
+    participant E as EnergySandbox
+    
+    CC->>E: Request power (X kW)
+    alt Power Available
+        E-->>CC: Power granted
+        CC->>CC: Use power for charging
+        CC->>E: Release power
+    else Power Not Available
+        E-->>E: Queue & wait
+    end

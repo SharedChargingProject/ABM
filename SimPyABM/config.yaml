@@ -1,0 +1,41 @@
+simulation:
+  name: 'avg_employee'
+  random_seed: 5520
+  start_date_time: '2023-06-05 06:00:00#Europe/Vienna' # format: 'YYYY-MM-DD HH:MM:SS#TZ'
+  duration_days: 1 # day(s)
+  num_vehicles_per_day_min: 30
+  num_vehicles_per_day_max: 120
+  verbose: false
+
+energy_grid:
+  max_power_kW: 1000 # kW
+
+charging_column:
+  strategy: "SHRD" # "FCFS" or "SHRD"
+  fast_charging_column:
+    quantity: 30
+    power: 44 
+    ports: 4
+  slow_charging_column:
+    quantity: 0
+    power: 11
+    ports: 4
+  resolution_sec: 30 # seconds
+  handshake_duration_sec_min: 2 # seconds
+  handshake_duration_sec_max: 38 # seconds uniform distribution
+
+vehicles:
+  soc_init:
+    min: 0.74
+    max: 0.84
+  battery_capacity_kwh:
+    min: 60
+    max: 60
+  entry_delay_max_min: 180 # minutes (To be relaced by a distribution in the future)
+  park_time_min_min: 480 # minutes (To be relaced by a distribution in the future)
+  park_time_max_min: 540 # minutes (To be relaced by a distribution in the future)
+  wait_time_min_min: 2 # minutes (To be relaced by a distribution in the future)
+  wait_time_max_min: 5 # minutes (To be relaced by a distribution in the future)
+  bat_max_voltages: [400, 800] # volts
+  bat_min_voltages: [200, 400] # volts
+  bat_voltage_mix: 0.5 # 0 = use min voltage, 1 = use max voltage

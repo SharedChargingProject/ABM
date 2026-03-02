@@ -1,0 +1,29 @@
+%%{init: {
+  "sequence": { "diagramMarginX": 0, "diagramMarginY": 0 }
+}}%%
+
+sequenceDiagram
+    participant V as Vehicle
+    participant CC as ChargingColumn
+    participant E as EnergySandbox
+    
+    Note over V,E: Vehicle Arrival
+    V->>CC: Request resource
+    CC-->>V: Resource granted
+    V->>CC: arrival_event
+    
+    Note over V,E: Handshake & Charging
+    CC->>V: Handshake
+    V-->>CC: Handshake OK
+    
+    loop Charge Windows
+        CC->>E: Request power
+        E-->>CC: Power granted
+        CC->>V: Deliver energy
+    end
+    
+    Note over V,E: Disconnect
+    
+    V->>CC: request_disconnect
+    CC->>V: request_disconnect_approved
+    V->>CC: Release resource

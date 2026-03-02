@@ -1,0 +1,57 @@
+flowchart TD
+    Start([Simulation Start]) --> Init1[Create SimPy Environment]
+    Init1 --> Init2[Create EnergySandbox<br/>Power Grid: simpy.Container]
+    Init2 --> Init3[Create ChargingColumns<br/>simpy.Resource n_ports each]
+    Init3 --> Init4[Spawn Vehicle Processes]
+    Init4 --> Run[Run Simulation]
+    
+    Run --> VStart
+    Run --> CStart
+    
+    VStart([Vehicle Process]) --> V1[Vehicle Arrives]
+    V1 --> V2[Search for Available Column]
+    V2 --> V3{Port<br/>Available?}
+    V3 -->|No| V4[Wait]
+    V4 --> V5{Timeout?}
+    V5 -->|Yes| VEnd1([Leave Unserved])
+    V5 -->|No| V3
+    V3 -->|Yes| V6[Request Column Resource]
+    V6 --> V7{Acquired<br/>in Time?}
+    V7 -->|No| VEnd2([Leave - Timeout])
+    V7 -->|Yes| V8[Signal: arrival_event]
+    V8 --> V9[Wait for charge_cmpt_event<br/>OR park_end]
+    V9 --> V9A{Park End<br/>Reached?}
+    V9A -->|No| V9B[Wait Until park_end]
+    V9B --> V10
+    V9A -->|Yes| V10[Signal: request_disconnect]
+    V10 --> V11[Wait: request_disconnect_approved]
+    V11 --> V12[Release Column Resource]
+    V12 --> VEnd3([Vehicle Leaves])
+    
+    CStart([ChargingColumn Process]) --> C1[Wait for arrival_event<br/>or Check Connected EVs]
+    C1 --> C2[Select Next EV]
+    C2 --> C2A[FCFS: Earliest assign_time<br/>SHRD: Oldest last_charge_time]
+    C2A --> C3{Handshake with EV}
+    C3 -->|Successful| C4{Power<br/>Needed?}
+    C3 -->|Unsuccessful| C3A[Wait 60 sec]
+    C3A --> C1
+    C4 -->|No| C9
+    C4 -->|Yes| C5[Request Power from EnergySandbox]
+    C5 --> C6{Power<br/>Granted?}
+    C6 -->|No - Disconnect| C9
+    C6 -->|Yes| C7[Deliver Energy in Window]
+    C7 --> C8{Continue<br/>Charging?}
+    C8 -->|Yes| C4
+    C8 -->|No| C11
+    C9[Signal: charge_cmpt_event &<br/>request_disconnect_approved] --> C10[Break Handshake]
+    C10 --> C1
+    C11{Disconnect Requested?<br/>OR<br/>Charge Completed?} -->|Yes| C9
+    C11 -->|No| C10
+    
+    E1[EnergySandbox] --> E2[Request Power]
+    E2 --> E3{Available in<br/>Container?}
+    E3 -->|No| E4[Queue]
+    E4 --> E3
+    E3 -->|Yes| E5[Allocate Power]
+    E5 --> E6[Column Uses Power]
+    E6 --> E7[Release Power Back]
