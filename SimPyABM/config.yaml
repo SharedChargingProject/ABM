@@ -9,6 +9,7 @@ simulation:
 
 energy_grid:
   max_power_kW: 1000 # kW
+  max_power_PV_kW: 100 # kW
 
 charging_column:
   strategy: "SHRD" # "FCFS" or "SHRD"

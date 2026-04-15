@@ -13,6 +13,7 @@ class Config:
         self.num_vehicles_per_day_max = cfg["simulation"]["num_vehicles_per_day_max"]
 
         self.energy_grid_max_power = cfg["energy_grid"]["max_power_kW"]
+        self.energy_grid_max_power_PV = cfg["energy_grid"]["max_power_PV_kW"]
 
         self.charging_strategy = cfg["charging_column"]["strategy"]
         self.num_fast_chg_cols = cfg["charging_column"]["fast_charging_column"]["quantity"]
