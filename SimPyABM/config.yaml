@@ -3,8 +3,8 @@ simulation:
   random_seed: 5520
   start_date_time: '2023-06-05 06:00:00#Europe/Vienna' # format: 'YYYY-MM-DD HH:MM:SS#TZ'
   duration_days: 1 # day(s)
-  num_vehicles_per_day_min: 30
-  num_vehicles_per_day_max: 120
+  num_vehicles_per_day_min: 6
+  num_vehicles_per_day_max: 10
   verbose: false
 
 energy_grid:
@@ -14,7 +14,7 @@ energy_grid:
 charging_column:
   strategy: "SHRD" # "FCFS" or "SHRD"
   fast_charging_column:
-    quantity: 30
+    quantity: 2
     power: 44 
     ports: 4
   slow_charging_column:

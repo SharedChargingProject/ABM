@@ -32,6 +32,21 @@ class Environment:
         """
         return datetime.fromtimestamp(unix_timestamp, tz=self.start_datetime.tzinfo)
 
+    def energy_price_adjustment_process(self):
+        while True:
+            # Adjust energy price based on the current time
+            current_time = self.now()
+            new_energy_price = self.energy_sandbox.data_provider.getEnergyPrice_unix(current_time)
+            self.current_energy_price = new_energy_price
+
+            # log the current energy price
+            self.logger.insert(
+                time=current_time,
+                field="energy_price",
+                value=self.current_energy_price,
+                agent='env')
+            yield self.simpy_env.timeout(60*15) # adjust every 15 minutes
+
     def log(self, *args, **kwargs):
         if self.verbose:
             print(self.unix_to_dt(self.now()), end=' - ')
