@@ -1,0 +1,21 @@
+base_config: "SimPyABM/config.yaml"
+outdir: "results"
+experiment: "ACSOS1"
+repetitions: 15
+base_seed: 0
+workers: 8
+
+simulation:
+  num_vehicles_per_day_min: [16]
+  num_vehicles_per_day_max: [24]
+
+charging_column:
+  fast_charging_column:
+    quantity: [10]
+  slow_charging_column:
+    quantity: [0]
+  strategy: ["SWRM", "FCFS", "SHRD"]
+
+grid:
+  energy_grid:
+    max_power_kW: [1000000]

@@ -1,27 +1,28 @@
 simulation:
   name: 'avg_employee'
-  random_seed: 5520
-  start_date_time: '2023-06-05 06:00:00#Europe/Vienna' # format: 'YYYY-MM-DD HH:MM:SS#TZ'
+  random_seed: 5
+  start_date_time: '2023-06-06 06:00:00#Europe/Vienna' # format: 'YYYY-MM-DD HH:MM:SS#TZ'
   duration_days: 1 # day(s)
-  num_vehicles_per_day_min: 6
-  num_vehicles_per_day_max: 10
+  time_resolution: 1200 # seconds
+  num_vehicles_per_day_min: 70
+  num_vehicles_per_day_max: 90
+  TTR_min: 9.36 # kWh (minimum energy to be delivered to a vehicle)
   verbose: false
 
 energy_grid:
   max_power_kW: 1000 # kW
-  max_power_PV_kW: 100 # kW
+  max_power_PV_kW: 500 # kW
 
 charging_column:
-  strategy: "SHRD" # "FCFS" or "SHRD"
+  strategy: "SWRM" # "FCFS" or "SHRD" or "SWRM"
   fast_charging_column:
-    quantity: 2
+    quantity: 20
     power: 44 
     ports: 4
   slow_charging_column:
     quantity: 0
     power: 11
     ports: 4
-  resolution_sec: 30 # seconds
   handshake_duration_sec_min: 2 # seconds
   handshake_duration_sec_max: 38 # seconds uniform distribution
 
@@ -40,3 +41,14 @@ vehicles:
   bat_max_voltages: [400, 800] # volts
   bat_min_voltages: [200, 400] # volts
   bat_voltage_mix: 0.5 # 0 = use min voltage, 1 = use max voltage
+
+SWRM:
+  look_ahead_time_h: 9 # h
+  replan_interval_slots: 5 # number of slots between replanning instances
+  a_pv: 2.0
+  a_price: 2.0
+  a_grid: 2.0
+  a_ramp: 1.0
+  a_scatter: 1.0
+  a_patience: 0.01
+  a_Q: 1.0

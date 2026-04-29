@@ -3,9 +3,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 class Vehicle():
-    def __init__(self, id, SoC, Capacity_kWh, bat_max_voltage, bat_min_voltage, env, enter_delay, park_time, wait_time):
+    def __init__(self, id, SoC, TTR_min, Capacity_kWh, bat_max_voltage, bat_min_voltage, env, enter_delay, park_time, wait_time):
         self.id = id
         SoC = SoC * Capacity_kWh  # convert to kWh
+        self.TTR_min = TTR_min # minimum energy to be delivered to the vehicle (kWh)
         self.init_SoC = SoC
         self.SoC = SoC
         self.Capacity_kWh = Capacity_kWh
@@ -48,11 +49,11 @@ class Vehicle():
                 # pick among the best
                 candidates = [c for c in charging_columns if (c.capacity - c.count) == max_free]
                 self.charging_column = self.env.rng.choice(candidates)
-                self.env.logger.insert(self.env.now(), field="wait_time", value=(self.env.now() - self.enter_time) ,agent=f"ev_{self.id}")
                 self.charging_column_assigned_time = self.env.now()
                 self.actual_wait_time = self.env.now() - self.enter_time
                 break
-            # no charging_column available: wait 1 minute and try again
+            # else:
+            # no charging_column available: wait maximum of 1 second and try again
             yield self.env.simpy_env.timeout(min((self.wait_end - self.env.now()), 1))
             if self.wait_end <= self.env.now():
                 self.env.log(f'EV {self.id} faild to get a charging_column and left. [waited for {self.wait_time/60} minutes]')
@@ -69,6 +70,8 @@ class Vehicle():
 
         # check if the charging_column was acquired
         if self.charging_column_req not in result:
+            # cancel pending request so it does not stay in the charger queue
+            self.charging_column.release(self.charging_column_req)
             # timeout occurred before acquiring the charging_column
             self.env.log(f'EV {self.id} could not acquire charging_column {self.charging_column.id} in time and left. [waited for {self.wait_time/60} minutes]')
             self.log_final_status()
@@ -77,7 +80,7 @@ class Vehicle():
         self.charging_column.arrival_event.succeed()  # notify the charging_column that a new EV has arrived
         self.charging_column.arrival_event = self.env.simpy_env.event()  # reset for next arrival
 
-        self.env.logger.insert(self.env.now(), field="CC_connected", value=self.env.now() ,agent=f"ev_{self.id}")
+        # self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="CC_connected", value=self.env.now(), field2="charger_id", value2=self.charging_column.id)
         self.env.log(f'EV {self.id} is connected to charging_column {self.charging_column.id}.')
 
         # Vehicle does not start charging, just waits until park time is over or charge is complete (signal from charging column)
@@ -113,18 +116,19 @@ class Vehicle():
             yield self.request_disconnect_approved # wait for charging column to approve disconnection
             self.charging_column.release(self.charging_column_req)
             self.env.log(f'EV {self.id} just released charging_column {self.charging_column.id} and left.')
+            # self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="leaving", value=self.env.now())
             self.charging_column_req = None
             self.charging_column = None
 
     def _rec_energy(self,amount_KWh):
-        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoC", value=self.SoC, field2="charger_id", value2=self.charging_column.id)
-        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoCp", value=self.get_SoC_percentage(), field2="charger_id", value2=self.charging_column.id)
-        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoC", value=self.SoC, field2="capacity", value2=self.Capacity_kWh)
+        # self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoC", value=self.SoC, field2="charger_id", value2=self.charging_column.id)
+        # self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoCp", value=self.get_SoC_percentage(), field2="charger_id", value2=self.charging_column.id)
+        # self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoC", value=self.SoC, field2="capacity", value2=self.Capacity_kWh)
         self.SoC += amount_KWh
         self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoC", value=self.SoC, field2="charger_id", value2=self.charging_column.id)
         self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoCp", value=self.get_SoC_percentage(), field2="charger_id", value2=self.charging_column.id)
         self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="SoC", value=self.SoC, field2="capacity", value2=self.Capacity_kWh)
-        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="rec_energy", value=self.rec_energy, field2="capacity", value2=self.Capacity_kWh)
+        # self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="rec_energy", value=self.rec_energy, field2="capacity", value2=self.Capacity_kWh)
         self.rec_energy += amount_KWh
         self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="rec_energy", value=self.rec_energy, field2="capacity", value2=self.Capacity_kWh)
 
@@ -163,13 +167,14 @@ class Vehicle():
             status = "partial"
         else:
             status = "unserved"
+        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="final_status", value=status)
         self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="final_SoC", value=self.SoC, field2="final_status", value2=status)
-        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="final_SoCp", value=self.get_SoC_percentage(), field2="final_status", value2=status)
+        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="final_SoCp", value=self.get_SoC_percentage())
         # final wait time
         self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="wait_time", value=self.actual_wait_time, field2="max_wait_time", value2=self.wait_time)
         # final charge time
         self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="charge_time", value=self.total_charge_time, field2="actual_charge_time", value2=self.actual_charge_time)
         # cost and received energy
-        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="total_cost", value=self.cost, field2="received_energy", value2=self.rec_energy)
-        
+        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="total_cost", value=self.cost)
+        self.env.logger.insert(self.env.now(), agent=f"ev_{self.id}", field="total_energy_received", value=self.rec_energy if self.rec_energy > 0 else 0)
 

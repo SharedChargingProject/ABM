@@ -15,7 +15,7 @@ library(lubridate)
 library(svglite)
 
 strategy <- "FCFS"
-expriment_name <- "avg_employee_seed_05520_days_001_strategy_SHRD_EVsMAX_010_CHGF_02_CHGS_00_maxGrid_1000"
+expriment_name <- "avg_employee_seed_05520_days_001_strategy_SWRM_EVsMAX_012_CHGF_01_CHGS_02_maxGrid_1000"
 file_name <- paste0(expriment_name, ".csv")
 
 df <- read_csv(
@@ -36,11 +36,14 @@ power_df <- df %>%
     time = as_datetime(suppressWarnings(as.numeric(time)), tz = "Europe/Vienna"),
     signal = case_when(
       field == "power_output_grid_kW" ~ "Grid usage",
-      field == "current_pv_power_kW" ~ "Max PV available"
+      field == "current_pv_power_kW" ~ "Max PV available",
+      field == "power_output_PV_kW" ~ "PV usage"
     ),
     value_kW = suppressWarnings(as.numeric(value))
   ) %>%
   filter(!is.na(time), !is.na(signal), !is.na(value_kW))
+
+
 
 grid_df <- power_df %>%
   filter(signal == "Grid usage")
@@ -87,8 +90,14 @@ price_df <- price_df %>%
 # ------------------------------------------------------------
 p <- ggplot() +
   geom_step(
-    data = grid_df,
+    data = power_df,
     aes(x = time, y = value_kW, color = "Grid usage"),
+    linewidth = 0.8,
+    alpha = 0.35
+  ) +
+  geom_step(
+    data = power_df,
+    aes(x = time, y = value_kW, color = "PV usage"),
     linewidth = 0.8,
     alpha = 0.35
   ) +
@@ -140,7 +149,7 @@ p <- ggplot() +
 print(p)
 
 ggsave(
-  paste0("GridPricePVa.PNG"),
+  paste0("GridPricePVa.svg"),
   plot = p,
   width = 10,
   height = 6,

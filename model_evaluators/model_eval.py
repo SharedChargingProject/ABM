@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # meta_run.py  (sweep ANY list leaf anywhere, except runner keys)
 
-import os, sys, argparse, itertools
+import os
+import sys
+import argparse
+import itertools
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -11,13 +14,62 @@ import simpy
 
 _DP = None
 _CFG_PARAMS = None
+_ABM_ROOT = None
+_SHARED_ROOT = None
+_DATA_ROOT = None
+
+
+def _abm_root_from_script() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _shared_root_from_script() -> Path:
+    return _abm_root_from_script().parent
+
+
+def _default_data_root() -> Path:
+    return _shared_root_from_script() / "SharedChargingData"
+
+
+def _resolve_path(raw_path, *, base_dir: Path | None = None, prefer_abm_root: bool = True) -> Path:
+    p = Path(raw_path)
+    if p.is_absolute():
+        return p.resolve()
+
+    candidates = []
+    if base_dir is not None:
+        candidates.append((base_dir / p).resolve())
+    if prefer_abm_root:
+        candidates.append((_abm_root_from_script() / p).resolve())
+    candidates.append((_shared_root_from_script() / p).resolve())
+    candidates.append(p.resolve())
+
+    for cand in candidates:
+        if cand.exists():
+            return cand
+
+    return candidates[0]
 
 
 # ---------- worker init (1 DataProvider per process) ----------
-def _init_worker(project_root: str, cfg_params: list[dict]):
-    global _DP, _CFG_PARAMS
-    sys.path.append(project_root)
+def _init_worker(abm_root: str, shared_root: str, data_root: str, cfg_params: list[dict]):
+    global _DP, _CFG_PARAMS, _ABM_ROOT, _SHARED_ROOT, _DATA_ROOT
+    _ABM_ROOT = Path(abm_root)
+    _SHARED_ROOT = Path(shared_root)
+    _DATA_ROOT = Path(data_root)
+
+    if str(_ABM_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ABM_ROOT))
+
+    os.environ.setdefault("SHAREDCHARGING_ABM_ROOT", str(_ABM_ROOT))
+    os.environ.setdefault("SHAREDCHARGING_ROOT", str(_SHARED_ROOT))
+    os.environ.setdefault("SHAREDCHARGING_DATA_ROOT", str(_DATA_ROOT))
+
+    # Make relative data paths stable for worker subprocesses.
+    os.chdir(_SHARED_ROOT)
+
     from SimPyABM.DataProvider import DataProvider
+
     _DP = DataProvider()
     _CFG_PARAMS = cfg_params
 
@@ -25,14 +77,10 @@ def _init_worker(project_root: str, cfg_params: list[dict]):
 # ---------- config utils ----------
 RUNNER_KEYS = {"base_config", "outdir", "experiment", "repetitions", "base_seed", "workers"}
 
+
 def _deepcopy(obj):
     return yaml.safe_load(yaml.safe_dump(obj))
 
-def _get_path(d, path):
-    cur = d
-    for k in path:
-        cur = cur[k]
-    return cur
 
 def _set_path(d, path, value):
     cur = d
@@ -42,6 +90,7 @@ def _set_path(d, path, value):
         cur = cur[k]
     cur[path[-1]] = value
 
+
 def _collect_list_leaves(d, prefix=()):
     out = []
     if isinstance(d, dict):
@@ -50,6 +99,7 @@ def _collect_list_leaves(d, prefix=()):
     elif isinstance(d, list):
         out.append((prefix, d))
     return out
+
 
 def _flatten_cfg(d, prefix=()):
     out = {}
@@ -63,67 +113,165 @@ def _flatten_cfg(d, prefix=()):
     return out
 
 
+# ---------- simulation helpers ----------
+def _build_energy_sandbox(simpy_env, config):
+    from SimPyABM.EnergySandbox import EnergySandbox
+
+    pv_max = getattr(config, "energy_grid_max_power_PV", 0)
+
+    try:
+        return EnergySandbox(simpy_env, config.energy_grid_max_power, pv_max, _DP)
+    except TypeError:
+        return EnergySandbox(simpy_env, config.energy_grid_max_power, _DP)
+
+
+def _build_environment(simpy_env, energy_sandbox, config):
+    from SimPyABM.Environment import Environment
+
+    try:
+        return Environment(simpy_env, energy_sandbox, config)
+    except TypeError:
+        return Environment(
+            simpy_env,
+            energy_sandbox,
+            config.random_seed,
+            config.start_date_time,
+            config.verbose,
+        )
+
+
+def _build_vehicle(v_id, soc, bat_cap, bat_max_voltage, bat_min_voltage, env, enter_delay, park_duration, wait_duration, config):
+    from SimPyABM.Vehicle import Vehicle
+
+    ttr_min = getattr(config, "TTR_min", None)
+
+    try:
+        return Vehicle(
+            v_id,
+            soc,
+            ttr_min,
+            bat_cap,
+            bat_max_voltage,
+            bat_min_voltage,
+            env,
+            enter_delay,
+            park_duration,
+            wait_duration,
+        )
+    except TypeError:
+        return Vehicle(
+            v_id,
+            soc,
+            bat_cap,
+            bat_max_voltage,
+            bat_min_voltage,
+            env,
+            enter_delay,
+            park_duration,
+            wait_duration,
+        )
+
+
+def _start_pv_process(simpy_env, energy_sandbox, env):
+    pv_proc = getattr(energy_sandbox, "pv_power_adjustment_process", None)
+    if callable(pv_proc):
+        simpy_env.process(pv_proc(env))
+
+
 # ---------- one simulation ----------
 def _run_one(args):
     config_path, seed, outdir, run_id, cfg_i = args
 
     from SimPyABM.ChargingColumn import ChargingColumn
-    from SimPyABM.Vehicle import Vehicle
-    from SimPyABM.Environment import Environment
-    from SimPyABM.EnergySandbox import EnergySandbox
     from SimPyABM.Config import load_config
 
     config = load_config(config_path)
     config.random_seed = int(seed)
 
     simpy_env = simpy.Environment()
-    energy_sandbox = EnergySandbox(simpy_env, config.energy_grid_max_power, _DP)
-    env = Environment(simpy_env, energy_sandbox, config.random_seed, config.start_date_time, config.verbose)
+    energy_sandbox = _build_energy_sandbox(simpy_env, config)
+    env = _build_environment(simpy_env, energy_sandbox, config)
 
-    ch_i, charging_columns = 0, []
+    ch_i = 0
+    charging_columns = []
+
     for _ in range(config.num_fast_chg_cols):
         charging_columns.append(
             ChargingColumn(
-                ch_i, config.fast_chg_cols_ports, config.chg_cols_resolution,
-                config.handshake_duration_min, config.handshake_duration_max,
-                config.fast_chg_cols_power, env
+                ch_i,
+                config.fast_chg_cols_ports,
+                config.time_resolution,
+                config.handshake_duration_min,
+                config.handshake_duration_max,
+                config.fast_chg_cols_power,
+                env,
             )
-        ); ch_i += 1
+        )
+        ch_i += 1
+
     for _ in range(config.num_slow_chg_cols):
         charging_columns.append(
             ChargingColumn(
-                ch_i, config.slow_chg_cols_ports, config.chg_cols_resolution,
-                config.handshake_duration_min, config.handshake_duration_max,
-                config.slow_chg_cols_power, env
+                ch_i,
+                config.slow_chg_cols_ports,
+                config.time_resolution,
+                config.handshake_duration_min,
+                config.handshake_duration_max,
+                config.slow_chg_cols_power,
+                env,
             )
-        ); ch_i += 1
-    for cc in charging_columns:
-        env.simpy_env.process(cc.main_loop(strategy=config.charging_strategy))
+        )
+        ch_i += 1
+
+    for charging_column in charging_columns:
+        env.simpy_env.process(charging_column.main_loop(strategy=config.charging_strategy))
 
     num_vehicles = env.rng.integers(
-        config.num_vehicles_per_day_min, config.num_vehicles_per_day_max + 1,
-        size=(config.duration_days,)
+        config.num_vehicles_per_day_min,
+        config.num_vehicles_per_day_max + 1,
+        size=(config.duration_days,),
     )
 
     v_id = 0
     for day in range(config.duration_days):
         for _ in range(int(num_vehicles[day])):
-            BAT_CAP = config.car_bat_cap_min + env.rng.random() * (config.car_bat_cap_max - config.car_bat_cap_min)
-            SoC = config.SoC_init_min + (config.SoC_init_max - config.SoC_init_min) * env.rng.random()
-            bat_max_voltage = config.bat_max_voltages[0] if env.rng.random() > config.bat_voltage_mix else config.bat_max_voltages[1]
-            bat_min_voltage = config.bat_min_voltages[0] if env.rng.random() > config.bat_voltage_mix else config.bat_min_voltages[1]
+            bat_cap = config.car_bat_cap_min + env.rng.random() * (config.car_bat_cap_max - config.car_bat_cap_min)
+            soc = config.SoC_init_min + (config.SoC_init_max - config.SoC_init_min) * env.rng.random()
+
+            bat_max_voltage = (
+                config.bat_max_voltages[0]
+                if env.rng.random() > config.bat_voltage_mix
+                else config.bat_max_voltages[1]
+            )
+            bat_min_voltage = (
+                config.bat_min_voltages[0]
+                if env.rng.random() > config.bat_voltage_mix
+                else config.bat_min_voltages[1]
+            )
+
             enter_delay = env.rng.random() * config.ev_enter_max_delay + day * 24 * 3600
             park_duration = config.park_time_min + env.rng.random() * (config.park_time_max - config.park_time_min)
             wait_duration = config.ev_wait_time_min + env.rng.random() * (config.ev_wait_time_max - config.ev_wait_time_min)
-            env.simpy_env.process(
-                Vehicle(v_id, SoC, BAT_CAP, bat_max_voltage, bat_min_voltage, env,
-                        enter_delay, park_duration, wait_duration).plug_in(charging_columns)
+
+            vehicle = _build_vehicle(
+                v_id,
+                soc,
+                bat_cap,
+                bat_max_voltage,
+                bat_min_voltage,
+                env,
+                enter_delay,
+                park_duration,
+                wait_duration,
+                config,
             )
+            env.simpy_env.process(vehicle.plug_in(charging_columns))
             v_id += 1
+
+    _start_pv_process(env.simpy_env, energy_sandbox, env)
 
     env.simpy_env.run(config.duration)
 
-    
     for charging_column in charging_columns:
         charging_column.final_logging()
 
@@ -132,7 +280,7 @@ def _run_one(args):
     df["run_id"] = int(run_id)
     df["cfg_i"] = int(cfg_i)
 
-    params = _CFG_PARAMS[cfg_i]  # FULL flattened params
+    params = _CFG_PARAMS[cfg_i]
     for k, v in params.items():
         df[k] = v
 
@@ -145,14 +293,15 @@ def _run_one(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--meta", required=True)
-    ap.add_argument("--keep-configs", action="store_true")   # <-- debug
+    ap.add_argument("--keep-configs", action="store_true")
     a = ap.parse_args()
 
     meta_path = Path(a.meta).resolve()
     meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
 
-    base_config_path = Path(meta["base_config"]).resolve()
-    outdir = Path(meta["outdir"]).resolve()
+    meta_dir = meta_path.parent
+    base_config_path = _resolve_path(meta["base_config"], base_dir=meta_dir, prefer_abm_root=True)
+    outdir = _resolve_path(meta["outdir"], base_dir=meta_dir, prefer_abm_root=True)
     experiment = meta["experiment"]
     reps = int(meta.get("repetitions", 1))
     base_seed = int(meta.get("base_seed", 0))
@@ -162,10 +311,8 @@ def main():
 
     base_cfg = yaml.safe_load(base_config_path.read_text(encoding="utf-8"))
 
-    # everything in meta except runner keys is treated as "sweep spec"
     sweep_spec = {k: v for k, v in meta.items() if k not in RUNNER_KEYS}
 
-    # collect list leaves anywhere in sweep_spec
     list_leaves = _collect_list_leaves(sweep_spec)
     paths = [p for p, _ in list_leaves]
     value_lists = [vals for _, vals in list_leaves]
@@ -175,7 +322,6 @@ def main():
     total_runs = num_cfgs * reps
     print(f"configs={num_cfgs}  repetitions={reps}  total_runs={total_runs}")
 
-    # generate concrete configs (base + one combo applied)
     cfg_dir = outdir / f"_{experiment}_configs"
     cfg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -189,7 +335,6 @@ def main():
         cfg_paths.append(str(cfg_path))
         cfg_params.append(_flatten_cfg(cfg))
 
-    # expanded meta (full params per concrete config)
     expanded_meta = {
         "base_config": str(base_config_path),
         "meta_config": str(meta_path),
@@ -197,6 +342,9 @@ def main():
         "repetitions": reps,
         "base_seed": base_seed,
         "workers": workers,
+        "abm_root": str(_abm_root_from_script()),
+        "shared_root": str(_shared_root_from_script()),
+        "data_root": str(_default_data_root()),
         "num_configs": num_cfgs,
         "total_runs": total_runs,
         "swept_paths": ["__".join(p) for p in paths],
@@ -207,31 +355,32 @@ def main():
         encoding="utf-8",
     )
 
-    # tasks: every (config, repetition)
     tasks, run_id = [], 0
     for cfg_i, cfg_path in enumerate(cfg_paths):
         for r in range(reps):
             tasks.append((cfg_path, base_seed + r, str(outdir), run_id, cfg_i))
             run_id += 1
 
-    project_root = str(Path(__file__).resolve().parent.parent)
+    abm_root = _abm_root_from_script()
+    shared_root = _shared_root_from_script()
+    data_root = _default_data_root()
 
     done, csvs = 0, []
     with ProcessPoolExecutor(
         max_workers=workers,
         initializer=_init_worker,
-        initargs=(project_root, cfg_params),
+        initargs=(str(abm_root), str(shared_root), str(data_root), cfg_params),
     ) as ex:
         futs = [ex.submit(_run_one, t) for t in tasks]
         for f in as_completed(futs):
             csvs.append(f.result())
             done += 1
-            print(f"{done}/{total_runs} ({100*done/total_runs:.1f}%)")
+            print(f"{done}/{total_runs} ({100 * done / total_runs:.1f}%)")
 
     merged = pd.concat(
         (pd.read_csv(p, dtype={"value2": "string"}, low_memory=False) for p in csvs),
-        ignore_index=True
-        )
+        ignore_index=True,
+    )
     final_path = outdir / f"{experiment}.csv"
     merged.to_csv(final_path, index=False)
 
