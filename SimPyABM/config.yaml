@@ -2,7 +2,7 @@ simulation:
   name: 'avg_employee'
   random_seed: 5
   start_date_time: '2023-06-06 06:00:00#Europe/Vienna' # format: 'YYYY-MM-DD HH:MM:SS#TZ'
-  duration_days: 1 # day(s)
+  duration_days: 5 # day(s)
   time_resolution: 1200 # seconds
   num_vehicles_per_day_min: 70
   num_vehicles_per_day_max: 90
